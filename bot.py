@@ -368,20 +368,36 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 `{chassis}` ဈေး ရိုက်ထည့်ပါ:\nဥပမာ: `150000`", parse_mode='Markdown')
 
 # ── Main ───────────────────────────────────────────────
-def main():
+# ── Main ────────────────────────────────────────────────
+# အပေါ်က handlers တွေ add လုပ်ပြီးသားဆိုရင် ဒီနေရာမှာ ထည့်ရုံပဲ
+
+async def main():
+    logger.info("Bot starting...")
+
     app = Application.builder().token(TOKEN).build()
+
+    # မင်း handlers တွေ အားလုံး ပြန်ထည့်ပါ (အရင်က ထည့်ထားတဲ့ အတိုင်း)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("find", find_car))
     app.add_handler(CommandHandler("model", find_model))
     app.add_handler(CommandHandler("price", add_price))
-    app.add_handler(CommandHandler("history", price_history))
-    app.add_handler(CommandHandler("list", list_cars))
-    app.add_handler(CommandHandler("web", web_link))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # ဓာတ်ပုံ handler ရှိရင် ထည့်ပါ
+    # app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(CallbackQueryHandler(button_callback))
-    logger.info("Bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # အခြား handlers တွေ လိုရင် ထည့်ပါ
+
+    # Polling စတင်ပါ
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(
+        drop_pending_updates=True,          # pending updates ရှင်းဖို့
+        allowed_updates=Update.ALL_TYPES    # လိုအပ်ရင် ပြင်ပါ
+    )
+
+    logger.info("Bot is polling now!")
+    # bot မရပ်အောင် ထားပါ (infinite loop)
+    await asyncio.Event().wait()
+
 
 if __name__ == '__main__':
-    main()
+    asyncio.run(main())
