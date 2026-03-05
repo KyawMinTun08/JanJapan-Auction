@@ -426,7 +426,9 @@ Extract every single row."""},
             }]
         }
 
-        resp = requests.post(url, json=payload, timeout=60)
+        import httpx
+async with httpx.AsyncClient() as client:
+    resp = await client.post(url, json=payload, timeout=60)
         data = resp.json()
 
         if "candidates" not in data:
@@ -470,7 +472,9 @@ async def gemini_ocr_chassis(file_bytes: bytes) -> str:
                 }]
             }
 
-            resp = requests.post(url, json=payload, timeout=30)
+            import httpx
+async with httpx.AsyncClient() as client:
+    resp = await client.post(url, json=payload, timeout=60)
             data = resp.json()
 
             if "candidates" in data:
