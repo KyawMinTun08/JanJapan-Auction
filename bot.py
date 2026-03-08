@@ -9,9 +9,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ── Tesseract OCR (fallback) ─────────────────────────
-# Railway: Add "tesseract-ocr" to Aptfile or Dockerfile:
-#   RUN apt-get update && apt-get install -y tesseract-ocr
-#   pip install pytesseract Pillow
 try:
     import pytesseract
     from PIL import Image
@@ -221,7 +218,6 @@ async def guess_model_from_chassis_gemini(chassis_input):
         data = resp.json()
         if "candidates" in data:
             model = data["candidates"][0]["content"]["parts"][0]["text"].strip().upper()
-            # Clean up response — take first line only
             model = model.split("\n")[0].strip()
             logger.info(f"Gemini guessed model for {prefix}: {model}")
             return model if model and model != "UNKNOWN" else "UNKNOWN"
@@ -284,7 +280,6 @@ async def upload_to_cloudinary(file_bytes: bytes, chassis: str) -> str:
         timestamp = str(int(time.time()))
         public_id = f"auction/{chassis.replace('-', '_')}_{timestamp}"
 
-        # Generate signature
         sig_str = f"public_id={public_id}&timestamp={timestamp}{CLOUDINARY_API_SECRET}"
         signature = hashlib.sha1(sig_str.encode()).hexdigest()
 
@@ -398,7 +393,6 @@ async def find_car(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(txt, parse_mode='Markdown',
                                         reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        # Try guessing model from prefix
         guessed = guess_model_from_chassis(chassis)
         if guessed == "UNKNOWN":
             guessed = await guess_model_from_chassis_gemini(chassis)
@@ -566,7 +560,6 @@ Important rules:
         text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
         logger.info(f"Gemini auction list raw: {text[:200]}")
 
-        # Parse JSON from response
         import json
         start = text.find('[')
         end = text.rfind(']') + 1
@@ -583,7 +576,6 @@ Important rules:
 
 async def gemini_ocr_chassis(file_bytes: bytes) -> dict:
     """Use Gemini Vision to extract chassis, model, color from car photo, with Tesseract fallback"""
-    # ── Step 1: Try Gemini ──
     if GEMINI_API_KEY:
         try:
             import base64
@@ -619,7 +611,6 @@ COLOR: PEARL WHITE"""},
                 text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 logger.info(f"Gemini raw: {text}")
 
-                # Parse chassis
                 chassis = ""
                 model = ""
                 color = ""
@@ -652,7 +643,6 @@ COLOR: PEARL WHITE"""},
         except Exception as e:
             logger.error(f"Gemini OCR error: {e}")
 
-    # ── Step 2: Fallback to Tesseract ──
     logger.info("Gemini failed or unavailable, trying Tesseract fallback...")
     chassis = tesseract_ocr_chassis(file_bytes)
     if chassis:
@@ -687,13 +677,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Add new cars to CARS (skip duplicates)
         existing_chassis = {c["chassis"].upper() for c in CARS}
         added = []
         for car in new_cars:
             chassis = str(car.get("chassis", "")).upper().strip()
             if chassis and chassis not in existing_chassis:
-                # Use Gemini's model if available, otherwise guess from prefix
                 model = car.get("model", "")
                 if not model or model == "UNKNOWN":
                     model = guess_model_from_chassis(chassis)
@@ -727,7 +715,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chassis = extract_chassis_from_text(caption) if caption else None
 
-    # Extract price from caption (pure number 4-6 digits)
     price_match = re.search(r'(?<![A-Z0-9])(\d{4,6})(?![A-Z0-9])', caption.upper()) if caption else None
     price = int(price_match.group(1)) if price_match else None
 
@@ -748,7 +735,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     car = find_by_chassis(chassis) if chassis else None
 
-    # Upload to Cloudinary if we have file_bytes and chassis
     image_url = ""
     if chassis and file_bytes:
         image_url = await upload_to_cloudinary(file_bytes, chassis)
@@ -781,7 +767,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(txt, parse_mode='Markdown')
     elif chassis:
-        # Chassis found but not in CARS list — use Gemini model/color or guess from prefix
         guessed_model = gemini_model if gemini_model else guess_model_from_chassis(chassis)
         if not guessed_model or guessed_model == "UNKNOWN":
             guessed_model = guess_model_from_chassis(chassis)
@@ -865,7 +850,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(txt, parse_mode='Markdown',
                                             reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            # Chassis found in text but not in CARS — guess model
             guessed = guess_model_from_chassis(chassis)
             if guessed == "UNKNOWN":
                 guessed = await guess_model_from_chassis_gemini(chassis)
@@ -909,28 +893,30 @@ async def approve_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Format မှားတယ်\nဥပမာ: `/approve @username 1` သို့မဟုတ် `/approve 123456789 3`",
             parse_mode='Markdown')
         return
+
     username_or_id = context.args[0].replace('@', '')
     try:
         months = int(context.args[1])
     except:
         await update.message.reply_text("❌ လ အရေအတွက် ဂဏန်းထည့်ပါ\nဥပမာ: `/approve @username 1`", parse_mode='Markdown')
         return
+
     days = months * 30
-    # Try to get user info from Telegram
+
+    # ✅ BUG FIX: UserID နဲ့ Username မှန်ကန်အောင် fix လုပ်ထားတယ်
     try:
-        # If numeric ID given
         member_id = int(username_or_id)
-        member_username = f"user_{member_id}"
-    except:
-        member_id = 0
-        member_username = username_or_id
+        member_username = username_or_id  # numeric ID ဆိုရင် ID ကိုပဲ username အဖြစ် သုံး
+    except ValueError:
+        member_id = None
+        member_username = username_or_id  # username string ဆိုရင် သူ့အတိုင်း သုံး
 
     # Save to Sheet
     try:
         async with httpx.AsyncClient() as client:
             await client.post(SHEET_WEBHOOK, json={
                 "action": "saveMember",
-                "userId": str(member_id) if member_id else username_or_id,
+                "userId": str(member_id) if member_id is not None else username_or_id,
                 "username": member_username,
                 "days": days
             }, timeout=10, follow_redirects=True)
@@ -1005,7 +991,7 @@ async def kick_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 async def check_expired_members(context):
-    """Auto kick expired members - runs daily"""
+    """Auto kick expired members - runs every 12 hours"""
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(SHEET_WEBHOOK, json={"action": "getMembers"}, timeout=10, follow_redirects=True)
