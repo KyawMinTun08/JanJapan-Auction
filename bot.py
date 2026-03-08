@@ -951,14 +951,14 @@ async def approve_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     expire_date = (datetime.now() + timedelta(days=days)).strftime("%d/%m/%Y")
     txt = (
-        f"✅ *Membership Approved!*\n\n"
+        f"✅ <b>Membership Approved!</b>\n\n"
         f"👤 @{member_username}\n"
-        f"📅 သက်တမ်း: *{months} လ*\n"
-        f"⏰ ကုန်ဆုံးရက်: `{expire_date}`\n"
+        f"📅 သက်တမ်း: <b>{months} လ</b>\n"
+        f"⏰ ကုန်ဆုံးရက်: <code>{expire_date}</code>\n"
     )
     if invite_url:
         txt += f"\n🔗 Invite Link:\n{invite_url}"
-    await update.message.reply_text(txt, parse_mode='Markdown')
+    await update.message.reply_text(txt, parse_mode='HTML')
 
 async def members_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
