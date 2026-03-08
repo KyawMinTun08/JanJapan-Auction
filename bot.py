@@ -314,7 +314,7 @@ async def upload_to_cloudinary(file_bytes: bytes, chassis: str) -> str:
         logger.error(f"Cloudinary upload error: {e}")
         return ""
 
-def save_price(chassis, model, color, year, price, user_name, image_url=""):
+async def save_price(chassis, model, color, year, price, user_name, image_url=""):
     now = datetime.now().strftime("%d/%m/%Y")
     entry = {
         "chassis": chassis, "model": model, "color": color,
@@ -325,7 +325,8 @@ def save_price(chassis, model, color, year, price, user_name, image_url=""):
     PRICE_HISTORY.append(entry)
     if SHEET_WEBHOOK:
         try:
-            requests.post(SHEET_WEBHOOK, json=entry, timeout=5)
+            async with httpx.AsyncClient() as client:
+                await client.post(SHEET_WEBHOOK, json=entry, timeout=10, follow_redirects=True)
         except:
             pass
     return entry
@@ -447,7 +448,7 @@ async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             guessed = await guess_model_from_chassis_gemini(chassis)
         car = {"chassis": chassis, "model": guessed, "color": "-", "year": 0}
     user_name = update.effective_user.first_name or "Unknown"
-    entry = save_price(car['chassis'], car['model'], car['color'], car['year'], price, user_name)
+    entry = await save_price(car['chassis'], car['model'], car['color'], car['year'], price, user_name)
     txt = (
         f"✅ *ဈေးထည့်ပြီးပါပြီ!*\n\n"
         f"🚗 {car['model']} — `{chassis}`\n"
@@ -754,7 +755,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if car and price:
         user_name = update.effective_user.first_name or "Unknown"
-        save_price(car['chassis'], car['model'], car['color'], car['year'], price, user_name, image_url)
+        await save_price(car['chassis'], car['model'], car['color'], car['year'], price, user_name, image_url)
         txt = (
             f"✅ *Auto ထည့်ပြီးပါပြီ!*\n\n"
             f"🚗 {car['model']} ({car['year']})\n"
@@ -787,7 +788,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_color = gemini_color if gemini_color else "-"
         if price:
             user_name = update.effective_user.first_name or "Unknown"
-            save_price(chassis, guessed_model, display_color, 0, price, user_name, image_url)
+            await save_price(chassis, guessed_model, display_color, 0, price, user_name, image_url)
             txt = (
                 f"✅ *Auto ထည့်ပြီးပါပြီ!*\n\n"
                 f"🚗 {guessed_model}\n"
@@ -840,7 +841,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price = int(text.replace(',', '').replace(' ', ''))
                 data = pending_photo.pop(user_id)
                 user_name = update.effective_user.first_name or "Unknown"
-                save_price(data['chassis'], data['model'], data['color'], data['year'], price, user_name, data.get('image_url', ''))
+                await save_price(data['chassis'], data['model'], data['color'], data['year'], price, user_name, data.get('image_url', ''))
                 txt = (
                     f"✅ *ဈေးထည့်ပြီးပါပြီ!*\n\n"
                     f"🚗 {data['model']} — `{data['chassis']}`\n"
@@ -932,7 +933,7 @@ async def approve_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "userId": str(member_id) if member_id else username_or_id,
                 "username": member_username,
                 "days": days
-            }, timeout=10)
+            }, timeout=10, follow_redirects=True)
     except Exception as e:
         logger.error(f"saveMember error: {e}")
 
@@ -966,7 +967,7 @@ async def members_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(SHEET_WEBHOOK, json={"action": "getMembers"}, timeout=10)
+            resp = await client.post(SHEET_WEBHOOK, json={"action": "getMembers"}, timeout=10, follow_redirects=True)
             data = resp.json()
             members = data.get("members", [])
     except Exception as e:
@@ -1007,7 +1008,7 @@ async def check_expired_members(context):
     """Auto kick expired members - runs daily"""
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(SHEET_WEBHOOK, json={"action": "getMembers"}, timeout=10)
+            resp = await client.post(SHEET_WEBHOOK, json={"action": "getMembers"}, timeout=10, follow_redirects=True)
             data = resp.json()
             members = data.get("members", [])
         for m in members:
