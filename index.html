@@ -319,7 +319,8 @@ canvas{width:100%!important;max-height:200px}
     <!-- Model avg chart -->
     <div id="apanel-model">
       <div class="chart-container">
-        <div class="chart-label">🏆 Model အလိုက် ပျမ်းမျှ ဈေး (Top 10)</div>
+        <div class="chart-label">🏆 အရောင်းရဆုံး Model Top 10 (စီးရေ + ဈေးနှုန်း)</div>
+        <div id="modelSummaryList" style="margin-bottom:10px"></div>
         <canvas id="modelChart"></canvas>
       </div>
     </div>
@@ -328,9 +329,10 @@ canvas{width:100%!important;max-height:200px}
     <div id="apanel-monthly" style="display:none">
       <div class="chart-container">
         <div class="chart-label" style="margin-bottom:8px">📅 လတိုင်း အရောင်းရဆုံး Model</div>
-        <select class="inp" id="monthlYearSel" onchange="renderMonthlySales()" style="margin-bottom:10px;font-size:12px">
+        <select class="inp" id="monthlYearSel" onchange="renderMonthlySales()" style="margin-bottom:8px;font-size:12px">
           <option value="">-- နှစ် ရွေးပါ --</option>
         </select>
+        <input class="inp" id="monthlySearch" placeholder="🔍 Model ရှာ (X-TRAIL, FIT...)" oninput="renderMonthlySales()" style="margin-bottom:10px;font-size:12px">
         <div id="monthlySalesList"></div>
       </div>
       <div class="chart-container" style="margin-top:10px">
@@ -979,8 +981,9 @@ function switchAnalysisTab(name) {
 
 function renderMonthlySales() {
   if(!priceData.length) return;
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Year list ဖြည့်
+  // Year list
   const years = [...new Set(priceData.map(p => {
     if(!p.date) return null;
     const parts = p.date.split('/');
@@ -988,99 +991,104 @@ function renderMonthlySales() {
   }).filter(Boolean))].sort().reverse();
 
   const sel = document.getElementById('monthlYearSel');
-  if(sel.options.length <= 1) {
-    years.forEach(y => {
-      const opt = document.createElement('option');
-      opt.value = y; opt.textContent = y;
-      sel.appendChild(opt);
-    });
-    if(years.length) sel.value = years[0];
-  }
-  const selYear = sel.value || (years[0] || '');
+  // rebuild year options if needed
+  while(sel.options.length > 1) sel.remove(1);
+  years.forEach(y => { const o = document.createElement('option'); o.value=y; o.textContent=y; sel.appendChild(o); });
+  if(!sel.value && years.length) sel.value = years[0];
+  const selYear = sel.value || (years[0]||'');
 
-  // လတိုင်း data group
-  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const monthData = {}; // { 'MM': { model: count } }
+  const searchEl = document.getElementById('monthlySearch');
+  const searchQ  = searchEl ? searchEl.value.toUpperCase().trim() : '';
 
+  // Build monthData: { 'MM': { model: [prices] } }
+  const monthData = {};
   priceData.forEach(p => {
     if(!p.date) return;
     const parts = p.date.split('/');
     if(parts.length !== 3) return;
-    const [dd, mm, yyyy] = parts;
+    const [, mm, yyyy] = parts;
     if(selYear && yyyy !== selYear) return;
-    const key = mm;
+    const key = mm.padStart(2,'0');
     if(!monthData[key]) monthData[key] = {};
     const m = p.model || 'UNKNOWN';
-    monthData[key][m] = (monthData[key][m] || 0) + 1;
+    if(!monthData[key][m]) monthData[key][m] = [];
+    monthData[key][m].push(Number(p.price));
   });
 
-  // Monthly list render
   const listEl = document.getElementById('monthlySalesList');
-  const sortedMonths = Object.keys(monthData).sort();
+  const allKeys = ['01','02','03','04','05','06','07','08','09','10','11','12'];
 
-  if(!sortedMonths.length) {
-    listEl.innerHTML = `<div style="color:var(--muted);text-align:center;padding:20px">Data မရှိသေး</div>`;
-    return;
-  }
+  listEl.innerHTML = allKeys.map(mm => {
+    const mName  = MONTHS[parseInt(mm)-1];
+    const models = monthData[mm] || {};
+    const hasData = Object.keys(models).length > 0;
 
-  listEl.innerHTML = sortedMonths.map(mm => {
-    const mIdx    = parseInt(mm) - 1;
-    const mName   = MONTHS[mIdx] || mm;
-    const models  = monthData[mm];
-    const sorted  = Object.entries(models).sort((a,b) => b[1]-a[1]);
-    const total   = sorted.reduce((s,[,c]) => s+c, 0);
-    const top3    = sorted.slice(0,3);
+    if(!hasData) return `<div style="background:var(--card2);border-radius:10px;padding:8px 12px;margin-bottom:6px;border:1px solid var(--border);opacity:0.35">
+      <div style="display:flex;justify-content:space-between">
+        <span style="font-size:12px;color:var(--muted)">📅 ${mName} ${selYear}</span>
+        <span style="font-size:10px;color:var(--muted)">data မရှိ</span>
+      </div></div>`;
 
-    const bars = top3.map(([model, count], i) => {
-      const pct    = Math.round((count/total)*100);
-      const colors = ['#f59e0b','#3b82f6','#10b981'];
-      return `<div style="margin-bottom:6px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px">
-          <span style="color:var(--text);font-weight:600">${model}</span>
-          <span style="color:${colors[i]}">${count} စီး (${pct}%)</span>
+    let rows = Object.entries(models)
+      .map(([model,prices]) => ({model, count:prices.length, avg:Math.round(prices.reduce((a,b)=>a+b,0)/prices.length), min:Math.min(...prices), max:Math.max(...prices)}))
+      .sort((a,b)=>b.count-a.count);
+    if(searchQ) rows = rows.filter(r=>r.model.toUpperCase().includes(searchQ));
+
+    const total  = Object.values(models).flat().length;
+    const colors = ['#f59e0b','#3b82f6','#10b981','#a855f7','#ef4444'];
+    const top5   = rows.slice(0,5);
+
+    const bars = top5.map((r,i) => {
+      const pct = Math.round((r.count/total)*100);
+      return `<div style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:2px">
+          <span style="color:var(--text);font-weight:700">${r.model}</span>
+          <span style="color:${colors[i]};font-weight:700">${r.count} စီး (${pct}%)</span>
         </div>
-        <div style="background:var(--border);border-radius:4px;height:6px">
-          <div style="background:${colors[i]};width:${pct}%;height:6px;border-radius:4px;transition:width 0.5s"></div>
+        <div style="display:flex;gap:4px;font-size:10px;color:var(--muted);margin-bottom:3px;flex-wrap:wrap">
+          <span>ပျမ်းမျှ <b style="color:var(--gold)">฿${r.avg.toLocaleString()}</b></span>
+          <span>·</span>
+          <span>Min <b style="color:#10b981">฿${r.min.toLocaleString()}</b></span>
+          <span>·</span>
+          <span>Max <b style="color:#ef4444">฿${r.max.toLocaleString()}</b></span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:5px">
+          <div style="background:${colors[i]};width:${pct}%;height:5px;border-radius:4px"></div>
         </div>
       </div>`;
     }).join('');
 
     return `<div style="background:var(--card2);border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid var(--border)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <span style="font-size:14px;font-weight:700;color:var(--gold)">📅 ${mName} ${selYear}</span>
-        <span style="font-size:11px;color:var(--muted);background:var(--card);padding:3px 8px;border-radius:12px">${total} စီး</span>
+        <span style="font-size:11px;color:var(--muted);background:var(--card);padding:2px 8px;border-radius:12px">${total} စီး</span>
       </div>
       ${bars}
+      ${rows.length>5?`<div style="font-size:10px;color:var(--muted);text-align:center;margin-top:4px">+ ${rows.length-5} model ထပ်ရှိ</div>`:''}
     </div>`;
   }).join('');
 
-  // Trend chart (လတိုင်း ရောင်းစုစုပေါင်း)
-  const trendLabels = sortedMonths.map(mm => MONTHS[parseInt(mm)-1] || mm);
-  const trendData   = sortedMonths.map(mm => Object.values(monthData[mm]).reduce((a,b)=>a+b,0));
+  // Trend chart — bar (count) + line (avg price)
+  const trendCount = allKeys.map(mm=>{ const d=monthData[mm]; return d?Object.values(d).flat().length:0; });
+  const trendAvg   = allKeys.map(mm=>{ const d=monthData[mm]; if(!d) return 0; const all=Object.values(d).flat(); return all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):0; });
 
   const ctx = document.getElementById('monthlyTrendChart').getContext('2d');
   if(monthlyTrendInst) monthlyTrendInst.destroy();
   monthlyTrendInst = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: trendLabels,
-      datasets: [{
-        label: 'ရောင်းစုစုပေါင်း (စီး)',
-        data: trendData,
-        borderColor: '#f59e0b',
-        backgroundColor: 'rgba(245,158,11,0.15)',
-        tension: 0.4,
-        fill: true,
-        pointBackgroundColor: '#f59e0b',
-        pointRadius: 5,
-      }]
+    data:{
+      labels: MONTHS,
+      datasets:[
+        {type:'bar', label:'ရောင်းအရေ (စီး)', data:trendCount, backgroundColor:'rgba(245,158,11,0.5)', borderColor:'#f59e0b', borderWidth:1, yAxisID:'y'},
+        {type:'line', label:'ပျမ်းမျှဈေး (฿)', data:trendAvg, borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.1)', tension:0.4, fill:false, pointRadius:4, pointBackgroundColor:'#3b82f6', yAxisID:'y2'}
+      ]
     },
-    options: {
-      responsive: true,
-      plugins: { legend: { labels: { color: '#e2e8f0', font: {size:11} } } },
-      scales: {
-        x: { ticks: { color:'#94a3b8', font:{size:10} }, grid: { color:'#1a2234' } },
-        y: { ticks: { color:'#94a3b8', font:{size:10}, stepSize:1 }, grid: { color:'#1a2234' } }
+    options:{
+      responsive:true,
+      plugins:{legend:{labels:{color:'#e2e8f0',font:{size:10}}}},
+      scales:{
+        x:{ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#1a2234'}},
+        y:{ticks:{color:'#f59e0b',font:{size:9},stepSize:1},grid:{color:'#1a2234'},position:'left'},
+        y2:{ticks:{color:'#3b82f6',font:{size:9},callback:v=>'฿'+v.toLocaleString()},grid:{display:false},position:'right'}
       }
     }
   });
@@ -1112,7 +1120,7 @@ function renderAnalysis() {
     {v:maesotCars+' / '+klang9Cars, l:'MaeSot / Klang9'},
   ].map(i=>`<div class="analysis-card"><div class="analysis-val">${i.v}</div><div class="analysis-lbl">${i.l}</div></div>`).join('');
 
-  // Model avg chart
+  // Model chart — အရောင်းရဆုံး Top 10 + ဈေးနှုန်း
   const modelMap = {};
   priceData.forEach(p => {
     const m = p.model || 'UNKNOWN';
@@ -1120,21 +1128,56 @@ function renderAnalysis() {
     modelMap[m].push(Number(p.price));
   });
   const topModels = Object.entries(modelMap)
-    .map(([m,ps]) => ({model:m, avg:Math.round(ps.reduce((a,b)=>a+b,0)/ps.length)}))
-    .sort((a,b)=>b.avg-a.avg).slice(0,10);
+    .map(([m,ps]) => ({
+      model: m,
+      count: ps.length,
+      avg:   Math.round(ps.reduce((a,b)=>a+b,0)/ps.length),
+      min:   Math.min(...ps),
+      max:   Math.max(...ps),
+    }))
+    .sort((a,b) => b.count - a.count)  // အရောင်းရဆုံး sort
+    .slice(0,10);
+
+  // Model summary cards
+  const modelSummaryEl = document.getElementById('modelSummaryList');
+  if(modelSummaryEl) {
+    modelSummaryEl.innerHTML = topModels.map((r,i) => `
+      <div style="background:var(--card2);border-radius:10px;padding:10px 12px;margin-bottom:6px;border:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:12px;font-weight:700;color:var(--text)">${i+1}. ${r.model}</span>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">
+            Min <b style="color:#10b981">฿${r.min.toLocaleString()}</b> · Max <b style="color:#ef4444">฿${r.max.toLocaleString()}</b> · Avg <b style="color:var(--gold)">฿${r.avg.toLocaleString()}</b>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:16px;font-weight:700;color:var(--gold)">${r.count}</div>
+          <div style="font-size:9px;color:var(--muted)">စီး</div>
+        </div>
+      </div>`).join('');
+  }
 
   const mCtx = document.getElementById('modelChart').getContext('2d');
   if(modelChartInst) modelChartInst.destroy();
   modelChartInst = new Chart(mCtx, {
     type:'bar',
     data:{
-      labels:topModels.map(m=>m.model),
-      datasets:[{label:'ပျမ်းမျှဈေး (฿)',data:topModels.map(m=>m.avg),backgroundColor:'rgba(245,158,11,0.6)',borderColor:'#f59e0b',borderWidth:1}]
+      labels: topModels.map(m=>m.model),
+      datasets:[
+        {label:'ရောင်းရသည့်အရေ (စီး)', data:topModels.map(m=>m.count), backgroundColor:'rgba(245,158,11,0.7)', borderColor:'#f59e0b', borderWidth:1, yAxisID:'y'},
+        {type:'line', label:'ပျမ်းမျှဈေး (฿)', data:topModels.map(m=>m.avg), borderColor:'#3b82f6', backgroundColor:'transparent', tension:0.4, pointRadius:4, pointBackgroundColor:'#3b82f6', yAxisID:'y2'}
+      ]
     },
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-      scales:{x:{ticks:{color:'#94a3b8',callback:v=>'฿'+v.toLocaleString(),font:{size:9}},grid:{color:'#1a2234'}},y:{ticks:{color:'#e2e8f0',font:{size:10}},grid:{color:'#1a2234'}}}}
+    options:{
+      indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#e2e8f0',font:{size:10}}}},
+      scales:{
+        x: {ticks:{color:'#94a3b8',font:{size:9}},grid:{color:'#1a2234'}},
+        y: {ticks:{color:'#e2e8f0',font:{size:10}},grid:{color:'#1a2234'}},
+        y2:{ticks:{color:'#3b82f6',font:{size:9},callback:v=>'฿'+v.toLocaleString()},grid:{display:false},position:'right'}
+      }
+    }
   });
-  document.getElementById('modelChart').style.height = '250px';
+  document.getElementById('modelChart').style.height = '280px';
 
   // Gate chart
   const gCtx = document.getElementById('gateChart').getContext('2d');
