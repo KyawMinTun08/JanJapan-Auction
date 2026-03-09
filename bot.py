@@ -589,7 +589,17 @@ async def gemini_ocr_chassis(file_bytes: bytes) -> dict:
             img_b64 = base64.b64encode(file_bytes).decode()
             url     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
             payload = {"contents":[{"parts":[
-                {"text":"Japan auction car photo. Find chassis number written on windshield with marker.\nReturn EXACTLY:\nCHASSIS: NT32-024640\nMODEL: X-TRAIL\nCOLOR: BLACK\nYEAR: 2014"},
+                {"text":"""Japan auction car photo.
+1. Find chassis number written on windshield with marker pen (e.g. NT32-024640, GP1-1049821, S510P-0173458)
+2. Identify car body COLOR from the paint (WHITE, BLACK, SILVER, PEARL WHITE, DARK BLUE, RED, BLUE, GREEN, YELLOW, BROWN, ORANGE, GREY)
+3. Identify car MODEL from the shape/badge
+4. Identify manufacturing YEAR if visible
+
+Return EXACTLY in this format (no extra text):
+CHASSIS: S510P-0236416
+MODEL: HIJET TRUCK
+COLOR: WHITE
+YEAR: 2017"""},
                 {"inline_data":{"mime_type":"image/jpeg","data":img_b64}}
             ]}]}
             async with httpx.AsyncClient() as client:
@@ -645,20 +655,52 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         existing = {c["chassis"].upper() for c in CARS}
         added    = []
+        unknown  = []  # မသေချာတဲ့ ကားတွေ
+
         for car in new_cars:
-            ch = str(car.get("chassis","")).upper().strip()
-            if ch and ch not in existing:
-                CARS.append({"chassis":ch,
-                             "model":car.get("model","") or guess_model_from_chassis(ch),
-                             "color":car.get("color","-"),
-                             "year":int(car.get("year",0)),
-                             "loc":import_loc})
-                existing.add(ch); added.append(ch)
+            ch    = str(car.get("chassis","")).upper().strip()
+            model = str(car.get("model","")).strip()
+            color = str(car.get("color","")).strip()
+            year  = int(car.get("year",0) or 0)
+
+            if not ch:
+                continue
+
+            # မသေချာတဲ့ field စစ်
+            missing_fields = []
+            if not model or model.upper() in ("", "UNKNOWN", "N/A"):
+                missing_fields.append("Model")
+                model = guess_model_from_chassis(ch)
+            if not color or color in ("", "-", "N/A"):
+                missing_fields.append("Color")
+                color = "-"
+            if not year:
+                missing_fields.append("Year")
+
+            if ch not in existing:
+                CARS.append({"chassis":ch, "model":model, "color":color,
+                             "year":year, "loc":import_loc})
+                existing.add(ch)
+                added.append(ch)
+
+            if missing_fields:
+                unknown.append({"chassis":ch, "model":model, "missing":missing_fields})
 
         txt = f"✅ *{loc_name} List Update ပြီး!*\n\n📊 ဖတ်ရ: {len(new_cars)} စီး\n✨ အသစ်: {len(added)} စီး\n"
         if added:
             txt += "\n🆕 " + "".join(f"`{ch}`\n" for ch in added[:10])
-            if len(added) > 10: txt += f"... {len(added)-10} စီး ထပ်ရှိ\n"
+            if len(added) > 10:
+                txt += f"... {len(added)-10} စီး ထပ်ရှိ\n"
+
+        # မသေချာတဲ့ ကားတွေ ထပ်ပြ
+        if unknown:
+            txt += f"\n⚠️ *မသေချာ ({len(unknown)} စီး) — ကိုယ်တိုင် ဖြည့်ပါ:*\n"
+            for u in unknown[:5]:
+                txt += f"• `{u['chassis']}` ({u['model']}) — မရ: *{', '.join(u['missing'])}*\n"
+                txt += f"  → `/price {u['chassis']} [ဈေး]`\n"
+            if len(unknown) > 5:
+                txt += f"... {len(unknown)-5} စီး ထပ်ရှိ\n"
+
         txt += f"\n📋 Database: {len(CARS)} စီး"
         await update.message.reply_text(txt, parse_mode='Markdown')
         return
@@ -690,48 +732,70 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     car_loc = loc_display(car.get('loc','MaeSot')) if car else LOC_MAESOT
 
-    # ── ✅ Chassis + Price တွေ့ → Confirm မေး (Auto Save မလုပ်) ──
-    if car and price:
+    # ✅ Gemini ကို အမြဲ ဦးစားပေး — Checklist က fallback သာ
+    final_model = gemini_model if gemini_model and gemini_model not in ("", "UNKNOWN") else (car['model'] if car else guess_model_from_chassis(chassis or ""))
+    final_color = gemini_color if gemini_color and gemini_color != "-" else (car['color'] if car else "-")
+    final_year  = gemini_year  if gemini_year  else (car.get('year', 0) if car else 0)
+    final_chassis = chassis or ""
+
+    # မသိတဲ့ field တွေ စစ်
+    missing = []
+    if not final_chassis:                                          missing.append("Chassis")
+    if not final_model or final_model == "UNKNOWN":               missing.append("Model")
+    if not final_color or final_color == "-":                     missing.append("Color")
+    if not final_year:                                            missing.append("Year")
+
+    # ── ✅ Chassis + Price တွေ့ → Confirm မေး ──
+    if final_chassis and price:
         pending_photo[user_id] = {
             "user_id":   user_id,
-            "chassis":   car['chassis'],
-            "model":     car['model'],
-            "color":     car['color'],
-            "year":      car['year'],
+            "chassis":   final_chassis,
+            "model":     final_model,
+            "color":     final_color,
+            "year":      final_year,
             "price":     price,
             "loc":       car_loc,
             "image_url": image_url,
         }
+
+        # မသိတဲ့ field ရှိရင် warning ပြ
+        warn = f"\n⚠️ မသေချာ: *{', '.join(missing)}*\n❌ Cancel နှိပ်ပြီး ကိုယ်တိုင် ပြင်ပါ\n" if missing else ""
+
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ မှန်တယ် Save",    callback_data=f"cs_{user_id}"),
             InlineKeyboardButton("❌ မှားတယ် Cancel", callback_data=f"cc_{user_id}"),
         ]])
         await update.message.reply_text(
             f"⚠️ *စစ်ဆေးပါ — မှန်ကန်ပါသလား?*\n\n"
-            f"🚗 *{car['model']}* ({ys(car.get('year',0))})\n"
-            f"🔑 `{car['chassis']}`\n"
-            f"🎨 {car['color']}\n"
+            f"🚗 *{final_model}* ({ys(final_year)})\n"
+            f"🔑 `{final_chassis}`\n"
+            f"🎨 {final_color}\n"
             f"📍 {car_loc}\n"
-            f"💰 ฿{price:,}\n\n"
+            f"💰 ฿{price:,}\n"
+            f"{warn}\n"
             f"✅ မှန်ရင် *Save* နှိပ်ပါ\n"
             f"❌ မှားရင် *Cancel* နှိပ်ပြီး `/price [chassis] [ဈေး]` သုံးပါ",
             parse_mode='Markdown', reply_markup=kb)
 
-    elif car:
+    elif final_chassis:
         # Price မပါ → price ရိုက်ထည့်ဖို့ မေး
         pending_photo[user_id] = {
             "user_id":   user_id,
-            "chassis":   car['chassis'],
-            "model":     car['model'],
-            "color":     car['color'],
-            "year":      car['year'],
+            "chassis":   final_chassis,
+            "model":     final_model,
+            "color":     final_color,
+            "year":      final_year,
             "price":     None,
             "loc":       car_loc,
             "image_url": image_url,
         }
+        warn = f"\n⚠️ မသေချာ: *{', '.join(missing)}*\n" if missing else ""
         await update.message.reply_text(
-            f"🚗 ကားတွေ့ပြီ!\n\n*{car['model']}* ({ys(car.get('year',0))})\n"
-            f"`{car['chassis']}`\n🎨 {car['color']}\n📍 {car_loc}\n\n"
+            f"🚗 *{final_model}* ({ys(final_year)})\n"
+            f"🔑 `{final_chassis}`\n"
+            f"🎨 {final_color}\n"
+            f"📍 {car_loc}\n"
+            f"{warn}\n"
             f"💰 ဈေး ရိုက်ထည့်ပါ:\nဥပမာ: `150000`",
             parse_mode='Markdown')
 
@@ -739,8 +803,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         guessed = gemini_model or guess_model_from_chassis(chassis)
         if not guessed or guessed == "UNKNOWN":
             guessed = guess_model_from_chassis(chassis)
-        display_color = gemini_color or "-"
-        display_year  = gemini_year or 0
+        display_color = final_color if final_color and final_color != "-" else (gemini_color or "-")
+        display_year  = final_year or gemini_year or 0
 
         if price:
             # Checklist မှာ မပါ + price ပါ → Confirm မေး
