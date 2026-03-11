@@ -115,8 +115,46 @@ select:focus{border-color:var(--primary);}
 .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-thumb{background:var(--gray2);border-radius:3px;}
-@media(max-width:900px){.sidebar{transform:translateX(-100%);}.main{margin-left:0;}.kpi-grid{grid-template-columns:repeat(2,1fr);}.grid-2,.grid-eq{grid-template-columns:1fr;}.car-grid{grid-template-columns:repeat(2,1fr);}.mgrid{grid-template-columns:repeat(2,1fr);}.detail-grid{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:600px){.car-grid{grid-template-columns:1fr;}.kpi-grid{grid-template-columns:1fr 1fr;}.mgrid{grid-template-columns:1fr;}}
+@media(max-width:900px){
+  .sidebar{transform:translateX(-100%);transition:transform 0.3s;}
+  .sidebar.open{transform:translateX(0);}
+  .main{margin-left:0;}
+  .kpi-grid{grid-template-columns:repeat(2,1fr);}
+  .grid-2,.grid-eq{grid-template-columns:1fr;}
+  .car-grid{grid-template-columns:repeat(2,1fr);}
+  .mgrid{grid-template-columns:repeat(2,1fr);}
+  .detail-grid{grid-template-columns:repeat(2,1fr);}
+  .header{padding:0 12px;gap:8px;}
+  .search-box{min-width:120px;}
+  .header-title{font-size:13px;}
+}
+@media(max-width:600px){
+  .car-grid{grid-template-columns:1fr !important;}
+  .kpi-grid{grid-template-columns:1fr 1fr;}
+  .mgrid{grid-template-columns:1fr;}
+  .header .btn-outline{display:none;}
+  .search-box{min-width:60px;padding:5px 8px;max-width:140px;}
+  .content{padding:10px;}
+  .tab-bar{padding:0 4px;}
+  .tab{padding:10px 8px;font-size:11px;}
+  .kpi-value{font-size:18px;}
+  .kpi-card{padding:14px;}
+  .card-body{padding:10px;}
+  .filter-bar{padding:8px 10px;gap:6px;}
+  .car-card{width:100%;max-width:100%;}
+  select{font-size:12px;padding:5px 6px;}
+}
+@media(max-width:400px){
+  .car-grid{grid-template-columns:1fr !important;}
+  .kpi-grid{grid-template-columns:1fr 1fr;}
+  .tab{padding:8px 6px;font-size:10px;}
+}
+#mobileMenuBtn{display:none;}
+@media(max-width:900px){
+  #mobileMenuBtn{display:flex;align-items:center;justify-content:center;width:36px;height:36px;background:var(--primary);border:none;border-radius:8px;color:#fff;font-size:18px;cursor:pointer;flex-shrink:0;}
+  #sideOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99;}
+  #sideOverlay.open{display:block;}
+}
 </style>
 </head>
 <body>
@@ -187,11 +225,13 @@ select:focus{border-color:var(--primary);}
 </aside>
 
 <div class="main">
+  <div id="sideOverlay" onclick="toggleSidebar()"></div>
   <header class="header">
-    <div style="display:flex;align-items:center;gap:10px;flex:1">
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:var(--primary);white-space:nowrap">🚗 Japan Auction Car Checker</div>
-      <div style="color:var(--border)">|</div>
-      <div class="header-title" id="headerTitle">Dashboard <span>Overview</span></div>
+    <button id="mobileMenuBtn" onclick="toggleSidebar()">☰</button>
+    <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;color:var(--primary);white-space:nowrap;display:none" class="desktop-only">🚗 Japan Auction Car Checker</div>
+      <div style="color:var(--border);display:none" class="desktop-only">|</div>
+      <div class="header-title" id="headerTitle" style="font-size:14px">Dashboard <span>Overview</span></div>
     </div>
     <div class="search-box">
       <span style="color:var(--gray3)">🔍</span>
@@ -711,22 +751,39 @@ function setOpts(id, vals) {
   vals.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;s.appendChild(o);});
 }
 
-function renderExplorer() {
+// dd/mm/yyyy → Date for sorting
+function parseDate(s) {
+  const p = String(s||'').split('/');
+  if(p.length===3) return new Date(parseInt(p[2]), parseInt(p[1])-1, parseInt(p[0]));
+  return new Date(0);
+}
+
+let explorerPage = 1;
+const EXPLORER_PAGE_SIZE = 30;
+
+function renderExplorer(resetPage) {
+  if(resetPage !== false) explorerPage = 1;
   const model=document.getElementById('fModel').value, color=document.getElementById('fColor').value,
         year=document.getElementById('fYear').value, loc=document.getElementById('fLoc').value,
         sort=document.getElementById('fSort').value;
   let f = allCars.filter(c=>(!model||c.model===model)&&(!color||c.color===color)&&(!year||String(c.year)===year)&&(!loc||c.location===loc));
+
   if(sort==='pa') f.sort((a,b)=>a.price-b.price);
   else if(sort==='pd') f.sort((a,b)=>b.price-a.price);
   else if(sort==='yd') f.sort((a,b)=>b.year-a.year);
-  document.getElementById('explorerCount').textContent = f.length+' cars';
+  else f.sort((a,b)=>parseDate(b.date)-parseDate(a.date)); // newest first default
+
+  const total = f.length;
+  const showing = Math.min(explorerPage * EXPLORER_PAGE_SIZE, total);
+  document.getElementById('explorerCount').textContent = showing+'/'+total+' cars';
   const g = document.getElementById('carGrid');
-  if(!f.length){g.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="ei">🚗</div><p>No cars match filters</p></div>';return;}
-  g.innerHTML = f.slice(0,30).map((c,i)=>{
+  if(!total){g.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="ei">🚗</div><p>No cars match filters</p></div>';return;}
+
+  const cards = f.slice(0, showing).map((c,i)=>{
     const hi = c.imageUrl&&c.imageUrl.startsWith('http');
     return `<div class="car-card">
       <div class="car-img" style="${hi?'':'background:'+BGs[i%BGs.length]}">
-        ${hi?`<img src="${c.imageUrl}" onerror="this.parentElement.innerHTML='🚗'">`:'🚗'}
+        ${hi?`<img src="${c.imageUrl}" loading="lazy" onerror="this.parentElement.innerHTML='🚗'">`:'🚗'}
         <div class="car-img-badge">${c.location}</div>
       </div>
       <div class="car-body">
@@ -742,6 +799,12 @@ function renderExplorer() {
         </div>
       </div>
     </div>`;}).join('');
+
+  const loadMore = showing < total
+    ? `<div style="grid-column:1/-1;text-align:center;padding:20px"><button class="btn btn-outline" onclick="explorerPage++;renderExplorer(false)">↓ Load More (${total-showing} ကားကျန်)</button></div>`
+    : '';
+
+  g.innerHTML = cards + loadMore;
 }
 
 function clearFilters(){['fModel','fColor','fYear','fLoc','fSort'].forEach(id=>document.getElementById(id).selectedIndex=0);renderExplorer();}
@@ -944,7 +1007,31 @@ function switchTab(name) {
 
 function destroyChart(k){if(charts[k]){try{charts[k].destroy()}catch(e){}delete charts[k];}}
 
+
+// ── Page Visibility Auto-Refresh ─────────────────────────
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && SESSION) {
+    const lastRefresh = parseInt(sessionStorage.getItem('lastRefresh') || 0);
+    const TEN_MIN = 10 * 60 * 1000;
+    if (Date.now() - lastRefresh > TEN_MIN) {
+      sessionStorage.setItem('lastRefresh', Date.now());
+      refreshData();
+    }
+  }
+});
 // init() is called from showApp() after login
+
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+  document.getElementById('sideOverlay').classList.toggle('open');
+}
+// Close sidebar when nav item clicked on mobile
+document.querySelectorAll('.nav-item').forEach(el => {
+  el.addEventListener('click', () => {
+    if(window.innerWidth <= 900) toggleSidebar();
+  });
+});
+
 </script>
 </body>
 </html>
