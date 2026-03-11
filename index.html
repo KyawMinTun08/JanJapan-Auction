@@ -286,6 +286,7 @@ select:focus{border-color:var(--primary);}
         <span style="margin-left:auto;font-size:12px;color:var(--text-muted)" id="explorerCount"></span>
       </div>
       <div class="car-grid" id="carGrid"><div class="empty" style="grid-column:1/-1"><div class="ei">🚗</div><p>Loading...</p></div></div>
+      <div id="loadMoreContainer" style="text-align:center;padding:16px"></div>
     </div>
 
     <!-- PRICE -->
@@ -800,11 +801,11 @@ function renderExplorer(resetPage) {
       </div>
     </div>`;}).join('');
 
-  const loadMore = showing < total
-    ? `<div style="grid-column:1/-1;text-align:center;padding:20px"><button class="btn btn-outline" onclick="explorerPage++;renderExplorer(false)">↓ Load More (${total-showing} ကားကျန်)</button></div>`
+  g.innerHTML = cards;
+  const lmc = document.getElementById('loadMoreContainer');
+  if(lmc) lmc.innerHTML = showing < total
+    ? `<button class="btn btn-outline" style="min-width:220px;padding:10px 24px" onclick="explorerPage++;renderExplorer(false)">↓ Load More &nbsp;(${total-showing} ကားကျန်)</button>`
     : '';
-
-  g.innerHTML = cards + loadMore;
 }
 
 function clearFilters(){['fModel','fColor','fYear','fLoc','fSort'].forEach(id=>document.getElementById(id).selectedIndex=0);renderExplorer();}
