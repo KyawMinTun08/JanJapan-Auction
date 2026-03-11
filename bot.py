@@ -533,27 +533,56 @@ async def send_approval_dm(context, member_id: int, months: int,
 
 # ── Commands ──────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id  = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+
     kb = []
     kb.append([InlineKeyboardButton("🆕 Membership ဝယ်ရန်", callback_data="join_start")])
     if ADMIN_USERNAME:
         kb.append([InlineKeyboardButton("💬 Admin ကို ဆက်သွယ်", url=f"https://t.me/{ADMIN_USERNAME}")])
     kb.append([InlineKeyboardButton("🌐 Web App ကြည့်",
                url="https://kyawmintun08.github.io/Japan-Auction-Car-Checker/")])
+
+    if is_admin:
+        # Admin — command အပြည့် ပြ
+        cmd_text = (
+            "*Member Commands:*\n"
+            "🔍 `/find NT32-504837` → Chassis ရှာ\n"
+            "🔎 `/model xtrail` → Model ရှာ\n"
+            "📋 `/history NT32-504837` → ဈေးမှတ်တမ်း\n"
+            "📊 `/list` → ကားအားလုံး\n"
+            "🌐 `/web` → Web Link\n"
+            "🔄 `/renew` → Membership သက်တမ်းတိုး\n"
+            "🔑 `/mypassword` → Password ပြန်ယူ\n\n"
+            "*Admin Commands:*\n"
+            "📸 ကားပုံ တင် → Chassis auto ဖတ်\n"
+            "📋 ပုံ + caption `list` → Auction List (Auto detect location)\n"
+            "💰 `/price NT32-504837 150000` → ဈေးထည့်\n"
+            "✅ `/approve @user 30 WEB` → Member approve\n"
+            "👥 `/members` → Member list\n"
+            "🔄 `/renew` → Member renew\n"
+            "🚫 `/kick @user` → Member kick\n"
+            "🔑 `/resetpass @user` → Password reset\n"
+            "🆔 `/updateid @user newID` → ID update\n"
+            "💾 `/backup` → CSV backup\n"
+        )
+    else:
+        # Member — basic commands ပဲ ပြ
+        cmd_text = (
+            "*Commands:*\n"
+            "🔍 `/find NT32-504837` → Chassis ရှာ\n"
+            "🔎 `/model xtrail` → Model ရှာ\n"
+            "📋 `/history NT32-504837` → ဈေးမှတ်တမ်း\n"
+            "📊 `/list` → ကားအားလုံး\n"
+            "🌐 `/web` → Web Link\n"
+            "🔄 `/renew` → Membership သက်တမ်းတိုး\n"
+            "🔑 `/mypassword` → Password ပြန်ယူ\n"
+        )
+
     await update.message.reply_text(
         f"🚗 *JAN JAPAN Auction Bot*\n"
         f"📍 {LOC_MAESOT} & {LOC_KLANG9}\n\n"
-        "*Commands:*\n"
-        "📸 ကားပုံ တင် → Chassis auto ဖတ်\n"
-        "📋 ပုံ + caption `list` → MaeSot List\n"
-        "📋 ပုံ + caption `list klang9` → Klang9 List\n"
-        "🔍 `/find NT32-504837` → Chassis ရှာ\n"
-        "🔎 `/model xtrail` → Model ရှာ\n"
-        "💰 `/price NT32-504837 150000` → ဈေးထည့်\n"
-        "📋 `/history NT32-504837` → ဈေးမှတ်တမ်း\n"
-        "📊 `/list` → ကားအားလုံး\n"
-        "🌐 `/web` → Web Link\n"
-        "🔄 `/renew` → Membership သက်တမ်းတိုး\n"
-        "🔑 `/mypassword` → Password ပြန်ယူ\n",
+        + cmd_text,
         parse_mode='Markdown',
         reply_markup=InlineKeyboardMarkup(kb))
 
@@ -865,29 +894,46 @@ def tesseract_ocr_chassis(file_bytes: bytes) -> str:
         logger.error(f"Tesseract: {e}")
         return ""
 
-async def gemini_ocr_auction_list(file_bytes: bytes) -> list:
+async def gemini_ocr_auction_list(file_bytes: bytes) -> tuple:
+    """Returns (cars_list, detected_location) where location is 'Klang9' or 'MaeSot'"""
     if not GEMINI_API_KEY:
-        return []
+        return [], None
     try:
         import base64, json
         img_b64 = base64.b64encode(file_bytes).decode()
         url     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents":[{"parts":[
-            {"text":"Japan auction car list. Extract ALL cars. Return ONLY JSON array:\n[{\"chassis\":\"NT32-024640\",\"model\":\"X-TRAIL\",\"color\":\"BLACK\",\"year\":2014},...]\\nEvery row. No markdown."},
+            {"text": (
+                "This is a JAN JAPAN auction car list image.\n"
+                "1. First check the header/title of the image for location:\n"
+                "   - If you see 'KALANG9', 'KLANG9', 'KLANG 9' → location = 'Klang9'\n"
+                "   - If you see 'MEASOT', 'MAESOT', 'MAE SOT' → location = 'MaeSot'\n"
+                "2. Extract ALL car rows from the table.\n\n"
+                "Return ONLY this JSON (no markdown, no extra text):\n"
+                "{\"location\":\"MaeSot\",\"cars\":[{\"chassis\":\"NT32-024640\",\"model\":\"X-TRAIL\",\"color\":\"BLACK\",\"year\":2014}]}"
+            )},
             {"inline_data":{"mime_type":"image/jpeg","data":img_b64}}
         ]}]}
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, timeout=60)
         data = resp.json()
         if "candidates" not in data:
-            return []
+            return [], None
         text  = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        # Try new format first
+        start = text.find('{'); end = text.rfind('}') + 1
+        if start >= 0 and end > start:
+            parsed = json.loads(text[start:end])
+            cars   = parsed.get("cars", [])
+            loc    = parsed.get("location", None)
+            return cars, loc
+        # Fallback: old array format
         start = text.find('['); end = text.rfind(']') + 1
         if start >= 0 and end > start:
-            return json.loads(text[start:end])
+            return json.loads(text[start:end]), None
     except Exception as e:
         logger.error(f"Gemini list: {e}")
-    return []
+    return [], None
 
 async def gemini_ocr_chassis(file_bytes: bytes) -> dict:
     if GEMINI_API_KEY:
@@ -1021,16 +1067,26 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Auction List Mode ──
     if "list" in caption:
-        is_klang9  = "klang9" in caption or "klang" in caption
-        import_loc = "Klang9" if is_klang9 else "MaeSot"
-        loc_name   = LOC_KLANG9 if is_klang9 else LOC_MAESOT
-        await update.message.reply_text(f"📋 {loc_name} Auction List ဖတ်နေတယ်... ⏳")
+        # Caption ကနေ location hint ယူ (fallback)
+        caption_klang9 = "klang9" in caption or "klang" in caption
+        await update.message.reply_text(f"📋 Auction List ဖတ်နေတယ်... ⏳")
         try:
             file       = await photo.get_file()
             file_bytes = bytes(await file.download_as_bytearray())
-            new_cars   = await gemini_ocr_auction_list(file_bytes)
+            new_cars, detected_loc = await gemini_ocr_auction_list(file_bytes)
         except Exception as e:
-            logger.error(f"Auction list: {e}"); new_cars = []
+            logger.error(f"Auction list: {e}"); new_cars = []; detected_loc = None
+
+        # Location ဆုံးဖြတ်ခြင်း — Gemini detection ကို ဦးစားပေး၊ caption fallback
+        if detected_loc in ("Klang9", "MaeSot"):
+            import_loc = detected_loc
+        elif caption_klang9:
+            import_loc = "Klang9"
+        else:
+            import_loc = "MaeSot"
+
+        loc_name = LOC_KLANG9 if import_loc == "Klang9" else LOC_MAESOT
+        await update.message.reply_text(f"📍 Location: *{loc_name}*", parse_mode='Markdown')
 
         if not new_cars:
             await update.message.reply_text("⚠️ List ဖတ်မရပါ\n💡 Gemini API limit ကုန်နိုင်တယ်")
