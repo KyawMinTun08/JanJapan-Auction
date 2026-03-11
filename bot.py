@@ -6,7 +6,8 @@ import string
 import logging
 import httpx
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 try:
@@ -275,6 +276,52 @@ def generate_password() -> str:
 def loc_display(loc_key: str) -> str:
     return LOC_KLANG9 if loc_key == "Klang9" else LOC_MAESOT
 
+async def get_member_package(user_id: int) -> str | None:
+    """
+    Returns member package ('CH' or 'WEB') if active, None if not a member.
+    Admin always returns 'WEB' (full access).
+    """
+    if user_id in ADMIN_IDS:
+        return "WEB"
+    try:
+        sheet_id = os.environ.get('SHEET_ID', '')
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:json&sheet=Members&_={int(datetime.now().timestamp())}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10)
+        text = resp.text
+        import json as _json
+        raw  = _json.loads(text[text.index('{'):text.rindex('}')+1])
+        rows = raw.get('table', {}).get('rows', [])
+        now  = datetime.now()
+        for row in rows:
+            c = row.get('c', [])
+            if not c: continue
+            # col 0 = UserID, col 3 = ExpireDate (formatted), col 4 = STATUS, col 6 = PACKAGE
+            uid_cell    = c[0] if len(c) > 0 else None
+            expire_cell = c[3] if len(c) > 3 else None
+            status_cell = c[4] if len(c) > 4 else None
+            pkg_cell    = c[6] if len(c) > 6 else None
+            if not uid_cell: continue
+            uid_val = uid_cell.get('f') or str(uid_cell.get('v',''))
+            uid_val = uid_val.replace('.0','').strip()
+            if uid_val != str(user_id): continue
+            # Found user — check status & expiry
+            status = (status_cell.get('v','') if status_cell else '').upper()
+            expire_str = (expire_cell.get('f','') if expire_cell else '')
+            try:
+                ep = expire_str.split('/')
+                expire_date = datetime(int(ep[2]), int(ep[1]), int(ep[0]))
+            except:
+                expire_date = datetime(2000,1,1)
+            if status == 'ACTIVE' and expire_date >= now:
+                pkg = (pkg_cell.get('v','CH') if pkg_cell else 'CH') or 'CH'
+                return str(pkg).upper()
+            return None  # Found but expired/inactive
+        return None  # Not found
+    except Exception as e:
+        logger.error(f"get_member_package: {e}")
+        return None
+
 def guess_model_from_chassis(chassis_input: str) -> str:
     cu = chassis_input.upper().strip()
     for prefix in sorted(CHASSIS_PREFIX_MAP.keys(), key=len, reverse=True):
@@ -341,7 +388,7 @@ def format_car_info(car, price=None, history=None) -> str:
         txt += f"\n📈 *မှတ်တမ်း ({len(history)} ကြိမ်):*\n"
         for h in history[-5:]:
             txt += f"  • {h['date']} → ฿{h['price']:,}\n"
-    txt += f"\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)"
+    txt += f"\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)"
     return txt
 
 async def upload_to_cloudinary(file_bytes: bytes, chassis: str) -> str:
@@ -391,7 +438,7 @@ async def post_to_channel(context, chassis, model, color, year, price, image_url
         f"💰 Price   : *฿{int(price):,}*\n"
         f"📍 {location}\n"
         f"━━━━━━━━━━━━━━\n"
-        f"🌐 [Japan Auction Car Checker](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)"
+        f"🌐 [Japan Auction Car Checker](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)"
     )
     try:
         if image_url:
@@ -504,13 +551,13 @@ async def send_approval_dm(context, member_id: int, months: int,
     if invite_url:
         cust_kb.append([InlineKeyboardButton("📢 Channel ဝင်ရန်", url=invite_url)])
     cust_kb.append([InlineKeyboardButton("🌐 Web App ဖွင့်",
-                    url="https://kyawmintun08.github.io/Japan-Auction-Car-Checker/")])
+                    url="https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/")])
     text = (
         f"🎉 *Membership Approved!*\n\n"
         f"📅 သက်တမ်း: *{months} လ*\n"
         f"⏰ ကုန်ဆုံးရက်: `{expire_date}`\n\n"
         f"🔑 *Web Password: `{password}`*\n"
-        f"🌐 Web: kyawmintun08.github.io/Japan-Auction-Car-Checker/\n\n"
+        f"🌐 Web: kyawmintun08.github.io/Japan-Auction-Car-Checker-/\n\n"
         f"⚠️ Password ကို မည်သူ့ကိုမျှ မပေးပါနဲ့\n"
         f"   မျှဝေပါက Membership ပိတ်သိမ်းခံရမည်\n\n"
         f"သက်တမ်းတိုးဖို့: /renew\nကျေးဇူးတင်ပါတယ် 🙏"
@@ -541,7 +588,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_USERNAME:
         kb.append([InlineKeyboardButton("💬 Admin ကို ဆက်သွယ်", url=f"https://t.me/{ADMIN_USERNAME}")])
     kb.append([InlineKeyboardButton("🌐 Web App ကြည့်",
-               url="https://kyawmintun08.github.io/Japan-Auction-Car-Checker/")])
+               url="https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/")])
 
     if is_admin:
         # Admin — command အပြည့် ပြ
@@ -593,20 +640,29 @@ async def find_car(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Chassis ထည့်ပါ\nဥပမာ: `/find NT32-504837`", parse_mode='Markdown')
         return
-    chassis = ' '.join(context.args)
-    car     = find_by_chassis(chassis)
+    user_id  = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+    chassis  = ' '.join(context.args)
+    car      = find_by_chassis(chassis)
     if car:
         history = get_price_history(car['chassis'])
         txt     = format_car_info(car, history[-1]['price'] if history else None, history or None)
-        kb      = [[InlineKeyboardButton("💰 ဈေးထည့်", callback_data=f"addprice_{car['chassis']}")]]
-        await update.message.reply_text(txt, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+        # ဈေးထည့် button — Admin only
+        kb = [[InlineKeyboardButton("💰 ဈေးထည့်", callback_data=f"addprice_{car['chassis']}")]] if is_admin else []
+        await update.message.reply_text(txt, parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(kb) if kb else None)
     else:
         guessed = guess_model_from_chassis(chassis)
         if guessed == "UNKNOWN":
             guessed = await guess_model_gemini(chassis)
-        msg = (f"⚠️ `{chassis}` Checklist မှာ မပါဘူး\n🚗 ခန့်မှန်း: *{guessed}*\n\n`/price {chassis} [ဈေး]`"
-               if guessed != "UNKNOWN"
-               else f"❌ `{chassis}` မတွေ့ပါ\n\n`/price {chassis} [ဈေး]`")
+        if is_admin:
+            msg = (f"⚠️ `{chassis}` Checklist မှာ မပါဘူး\n🚗 ခန့်မှန်း: *{guessed}*\n\n`/price {chassis} [ဈေး]`"
+                   if guessed != "UNKNOWN"
+                   else f"❌ `{chassis}` မတွေ့ပါ\n\n`/price {chassis} [ဈေး]`")
+        else:
+            msg = (f"⚠️ `{chassis}` Checklist မှာ မပါဘူး\n🚗 ခန့်မှန်း: *{guessed}*"
+                   if guessed != "UNKNOWN"
+                   else f"❌ `{chassis}` မတွေ့ပါ")
         await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def find_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -616,21 +672,32 @@ async def find_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Model ထည့်ပါ\nဥပမာ: `/model xtrail`", parse_mode='Markdown')
         return
-    query   = ' '.join(context.args)
-    results = find_by_model(query)
+    user_id  = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+    query    = ' '.join(context.args)
+    results  = find_by_model(query)
     if not results:
-        await update.message.reply_text(f"❌ *{query}* မတွေ့ပါ", parse_mode='Markdown')
+        if is_admin:
+            await update.message.reply_text(
+                f"❌ *{query}* မတွေ့ပါ\n\n💡 Admin: ပုံ + caption `list` တင်ပြီး checklist ထည့်နိုင်",
+                parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ *{query}* Checklist မှာ မရှိသေးပါ", parse_mode='Markdown')
         return
     txt = f"🔎 *{query.upper()}* ({len(results)} စီး):\n\n"
     for car in results:
         history   = get_price_history(car['chassis'])
         price_str = f"฿{history[-1]['price']:,}" if history else "ဈေးမရသေး"
         txt += f"• `{car['chassis']}` — {car['color']} {ys(car.get('year',0))} [{loc_display(car.get('loc','MaeSot'))}] — *{price_str}*\n"
-    txt += f"\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)"
+    txt += f"\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)"
     await update.message.reply_text(txt, parse_mode='Markdown')
 
 async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not check_rate_limit(update.effective_user.id):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("🚫 Admin သာ ဈေးထည့်ခွင့်ရှိတယ်")
+        return
+    if not check_rate_limit(user_id):
         await update.message.reply_text("⚠️ Request များသွားတယ် — ခဏစောင့်ပါ")
         return
     if len(context.args) < 2:
@@ -649,15 +716,17 @@ async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ *ဈေးထည့်ပြီး!*\n\n🚗 {car['model']} ({ys(car.get('year',0))}) — `{chassis}`\n"
         f"💰 ฿{price:,}\n📍 {loc}\n📅 {entry['date']}\n👤 {user_name}\n\n"
-        f"🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)",
+        f"🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)",
         parse_mode='Markdown')
 
 async def price_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Chassis ထည့်ပါ\nဥပမာ: `/history NT32-504837`", parse_mode='Markdown')
         return
-    chassis = ' '.join(context.args).upper()
-    history = get_price_history(chassis)
+    user_id  = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+    chassis  = ' '.join(context.args).upper()
+    history  = get_price_history(chassis)
     if not history:
         await update.message.reply_text(f"❌ `{chassis}` ဈေးမှတ်တမ်း မရှိသေးပါ", parse_mode='Markdown')
         return
@@ -676,7 +745,10 @@ async def price_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         change = history[-1]['price'] - history[0]['price']
         pct    = (change / history[0]['price']) * 100
         txt += f"\n📊 ပြောင်းလဲမှု: *{change:+,}* ({pct:+.1f}%)"
-    await update.message.reply_text(txt, parse_mode='Markdown')
+    # ဈေးထည့် button — Admin only
+    kb = [[InlineKeyboardButton("💰 ဈေးအသစ်ထည့်", callback_data=f"addprice_{chassis}")]] if is_admin else []
+    await update.message.reply_text(txt, parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(kb) if kb else None)
 
 async def list_cars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     priced = {p['chassis'] for p in PRICE_HISTORY}
@@ -686,14 +758,30 @@ async def list_cars(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt += f"{status} `{car['chassis']}` — {car['model']} {ys(car.get('year',0))} [{loc_display(car.get('loc','MaeSot'))}]\n"
     if len(CARS) > 20:
         txt += f"\n... နှင့် {len(CARS)-20} စီး ထပ်ရှိ"
-    txt += f"\n\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)"
+    txt += f"\n\n🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)"
     await update.message.reply_text(txt, parse_mode='Markdown')
 
 async def web_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"🌐 *JAN JAPAN Auction Web App*\n\nhttps://kyawmintun08.github.io/Japan-Auction-Car-Checker/\n\n"
-        f"• {LOC_MAESOT} + {LOC_KLANG9} 🚗\n• ဈေးကြည့်နိုင် 📈\n• Chart ကြည့်နိုင် 📊",
-        parse_mode='Markdown')
+    user_id = update.effective_user.id
+    pkg     = await get_member_package(user_id)
+    if pkg == "WEB":
+        await update.message.reply_text(
+            f"🌐 *Japan Auction Car Checker — Web App*\n\n"
+            f"https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/\n\n"
+            f"• {LOC_MAESOT} + {LOC_KLANG9} 🚗\n• ဈေးကြည့်နိုင် 📈\n• Chart ကြည့်နိုင် 📊",
+            parse_mode='Markdown')
+    elif pkg == "CH":
+        await update.message.reply_text(
+            "🚫 *Web App access မရှိသေးပါ*\n\n"
+            "လက်ရှိ Package: 📱 Channel Only\n\n"
+            "🌐 Web App ကြည့်ဖို့ *Channel+Web Package* သို့ Upgrade လုပ်ပါ\n"
+            "👉 /renew နှိပ်ပြီး WEB package ရွေးပါ",
+            parse_mode='Markdown')
+    else:
+        await update.message.reply_text(
+            "🚫 *Member များသာ Web App ကြည့်နိုင်ပါသည်*\n\n"
+            "Membership ဝယ်ရန် 👉 /renew",
+            parse_mode='Markdown')
 
 # ── /renew & /join — Package Selection ───────────────
 def build_package_keyboard(user_id: int, action: str = "renew"):
@@ -749,7 +837,7 @@ async def mypassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"🔑 *သင်၏ Web Password*\n\n"
                 f"`{data['password']}`\n\n"
-                f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker/\n\n"
+                f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/\n\n"
                 f"⚠️ Password ကို မည်သူ့ကိုမျှ မပေးပါနဲ့",
                 parse_mode='Markdown')
         else:
@@ -790,7 +878,7 @@ async def resetpass_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         chat_id=int(member_id),
                         text=f"🔑 *Password Reset လုပ်ပြီ*\n\n"
                              f"New Password: `{new_pw}`\n\n"
-                             f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker/\n\n"
+                             f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/\n\n"
                              f"⚠️ မည်သူ့ကိုမျှ မပေးပါနဲ့",
                         parse_mode='Markdown')
                 except Exception as e:
@@ -1297,7 +1385,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(
             f"✅ *Save ပြီး!*\n\n🚗 {info['model']} ({ys(info.get('year',0))})\n"
             f"🔑 `{info['chassis']}`\n📍 {info.get('loc', LOC_MAESOT)}\n💰 ฿{info['price']:,}\n\n"
-            f"🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker/)",
+            f"🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)",
             parse_mode='Markdown')
         await post_to_channel(context, info['chassis'], info['model'], info['color'],
                              info['year'], info['price'], info.get('image_url',''), info.get('loc', LOC_MAESOT))
@@ -1473,7 +1561,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text=f"✅ *Account Update ပြီ*\n\n"
                              f"Telegram ID အသစ်နဲ့ ချိတ်ဆက်ပြီ\n"
                              f"🔑 New Password: `{new_pw}`\n\n"
-                             f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker/",
+                             f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/",
                         parse_mode='Markdown')
                 except Exception as e:
                     logger.error(f"UpdateID notify: {e}")
@@ -1702,6 +1790,49 @@ async def main():
     app.job_queue.run_repeating(check_expired_members, interval=43200, first=60)
     await app.initialize()
     await app.start()
+
+    # ── Command Menu Scope Setup ──────────────────────
+    # Member တွေ မြင်မည့် commands
+    member_commands = [
+        BotCommand("start",      "🚗 Bot စတင်ရန်"),
+        BotCommand("find",       "🔍 Chassis ဖြင့်ရှာရန်"),
+        BotCommand("model",      "🔎 Model အမည်ဖြင့်ရှာရန်"),
+        BotCommand("history",    "📈 ဈေးနှုန်း မှတ်တမ်းကြည့်ရန်"),
+        BotCommand("list",       "📊 ကားစာရင်း အားလုံးကြည့်ရန်"),
+        BotCommand("web",        "🌐 Web App link ကြည့်ရန်"),
+        BotCommand("renew",      "🔄 Membership သက်တမ်းတိုး"),
+        BotCommand("mypassword", "🔑 Password ပြန်ယူရန်"),
+    ]
+    # Admin တွေ မြင်မည့် commands (member + admin)
+    admin_commands = member_commands + [
+        BotCommand("price",     "💰 ကားဈေးထည့်ရန် (Admin)"),
+        BotCommand("approve",   "✅ Member approve လုပ်ရန် (Admin)"),
+        BotCommand("members",   "👥 Member စာရင်းကြည့်ရန် (Admin)"),
+        BotCommand("kick",      "🚫 Member ထုတ်ရန် (Admin)"),
+        BotCommand("resetpass", "🔑 Password reset (Admin)"),
+        BotCommand("updateid",  "🆔 Member ID update (Admin)"),
+        BotCommand("backup",    "💾 CSV Backup (Admin)"),
+    ]
+    try:
+        # Default scope — member commands
+        await app.bot.set_my_commands(
+            member_commands,
+            scope=BotCommandScopeAllPrivateChats()
+        )
+        # Admin scope — full commands
+        for admin_id in ADMIN_IDS:
+            try:
+                await app.bot.set_my_commands(
+                    admin_commands,
+                    scope=BotCommandScopeChat(chat_id=admin_id)
+                )
+            except Exception as e:
+                logger.warning(f"Admin scope set failed for {admin_id}: {e}")
+        logger.info("Command scopes set successfully")
+    except Exception as e:
+        logger.error(f"set_my_commands error: {e}")
+    # ──────────────────────────────────────────────────
+
     await app.updater.start_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
     logger.info("Bot polling!")
     await asyncio.Event().wait()
