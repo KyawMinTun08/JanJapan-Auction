@@ -705,7 +705,15 @@ async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Request များသွားတယ် — ခဏစောင့်ပါ")
         return
     if len(context.args) < 2:
-        await update.message.reply_text("❌ Format: `/price NT32-504837 150000`", parse_mode='Markdown')
+        await update.message.reply_text(
+            "❌ Format:\n"
+            "`/price CHASSIS PRICE` — အခြေခံ\n"
+            "`/price CHASSIS PRICE COLOR` — color ပါ\n"
+            "`/price CHASSIS PRICE MODEL COLOR` — model+color ပါ\n\n"
+            "ဥပမာ:\n"
+            "`/price VZN11-042846 74000 WHITE`\n"
+            "`/price VZN11-042846 74000 AD VAN WHITE`",
+            parse_mode='Markdown')
         return
     chassis = context.args[0].upper()
     try:
@@ -713,13 +721,66 @@ async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.message.reply_text("❌ ဈေး ဂဏန်းသာ ထည့်ပါ", parse_mode='Markdown')
         return
-    car       = find_by_chassis(chassis) or {"chassis":chassis,"model":guess_model_from_chassis(chassis),"color":"-","year":0,"loc":"MaeSot"}
+
+    # Parse optional model and color from remaining args
+    # Format: /price CHASSIS PRICE [MODEL WORDS...] [COLOR]
+    extra_args = context.args[2:]  # everything after price
+    car = find_by_chassis(chassis)
+
+    if extra_args:
+        if len(extra_args) == 1:
+            # Only color provided
+            override_color = extra_args[0].upper()
+            override_model = None
+        else:
+            # Last arg = color, middle args = model
+            override_color = extra_args[-1].upper()
+            override_model = " ".join(extra_args[:-1]).upper()
+
+        if car:
+            # Update in-memory CARS list
+            for c in CARS:
+                if c.get("chassis","").upper() == chassis.upper():
+                    if override_color: c["color"] = override_color
+                    if override_model: c["model"] = override_model
+                    break
+        else:
+            # Not in checklist — create temp entry
+            base_model = override_model or guess_model_from_chassis(chassis)
+            car = {"chassis": chassis, "model": base_model,
+                   "color": override_color, "year": 0, "loc": "MaeSot"}
+
+        # Apply overrides to car dict
+        if override_color and car: car = dict(car); car["color"] = override_color
+        if override_model and car: car["model"] = override_model
+
+        # Also update Google Sheet
+        if SHEET_WEBHOOK:
+            try:
+                async with httpx.AsyncClient() as client:
+                    if override_color:
+                        await client.post(SHEET_WEBHOOK, json={
+                            "action": "updateCar", "chassis": chassis,
+                            "field": "color", "value": override_color
+                        }, timeout=10, follow_redirects=True)
+                    if override_model:
+                        await client.post(SHEET_WEBHOOK, json={
+                            "action": "updateCar", "chassis": chassis,
+                            "field": "model", "value": override_model
+                        }, timeout=10, follow_redirects=True)
+            except Exception as e:
+                logger.error(f"updateCar in price cmd: {e}")
+    else:
+        if not car:
+            car = {"chassis": chassis, "model": guess_model_from_chassis(chassis),
+                   "color": "-", "year": 0, "loc": "MaeSot"}
+
     user_name = update.effective_user.first_name or "Unknown"
     loc       = loc_display(car.get('loc','MaeSot'))
     entry     = await save_price(car['chassis'], car['model'], car['color'], car['year'], price, user_name, location=loc)
     await update.message.reply_text(
         f"✅ *ဈေးထည့်ပြီး!*\n\n🚗 {car['model']} ({ys(car.get('year',0))}) — `{chassis}`\n"
-        f"💰 ฿{price:,}\n📍 {loc}\n📅 {entry['date']}\n👤 {user_name}\n\n"
+        f"🎨 {car['color']}\n💰 ฿{price:,}\n📍 {loc}\n📅 {entry['date']}\n👤 {user_name}\n\n"
         f"🌐 [Web မှာကြည့်](https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/)",
         parse_mode='Markdown')
 
@@ -1353,8 +1414,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_val = int(text.replace(",","").replace(" ",""))
                 display = f"฿{new_val:,}"
             except:
-                await update.message.reply_text("❌ ဂဏန်းသက်သက်သာ ရိုက်ပါ
-ဥပမာ: `150000`", parse_mode='Markdown')
+                await update.message.reply_text("❌ ဂဏန်းသက်သက်သာ ရိုက်ပါ\nဥပမာ: `150000`", parse_mode='Markdown')
                 pending_edit[user_id] = edit  # put back
                 return
         elif field == "color":
@@ -1494,12 +1554,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         pending_edit[query.from_user.id] = {"chassis": chassis, "field": field}
         prompts = {
-            "price": f"💰 `{chassis}` ဈေးအသစ် ရိုက်ထည့်ပါ:
-ဥပမာ: `150000`",
-            "color": f"🎨 `{chassis}` Color အသစ် ရိုက်ထည့်ပါ:
-ဥပမာ: `PEARL WHITE`",
-            "model": f"🚗 `{chassis}` Model အသစ် ရိုက်ထည့်ပါ:
-ဥပမာ: `HONDA FIT`",
+            "price": f"💰 `{chassis}` ဈေးအသစ် ရိုက်ထည့်ပါ:\nဥပမာ: `150000`",
+            "color": f"🎨 `{chassis}` Color အသစ် ရိုက်ထည့်ပါ:\nဥပမာ: `PEARL WHITE`",
+            "model": f"🚗 `{chassis}` Model အသစ် ရိုက်ထည့်ပါ:\nဥပမာ: `HONDA FIT`",
         }
         await query.message.reply_text(prompts[field], parse_mode='Markdown')
 
