@@ -271,6 +271,21 @@ def check_rate_limit(user_id: int, max_req: int = 10, window: int = 60) -> bool:
     return True
 
 # ── Password Generator ─────────────────────────────────
+async def is_active_member(user_id: int) -> bool:
+    """Check if user is ACTIVE member or Admin"""
+    if user_id in ADMIN_IDS:
+        return True
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.post(SHEET_WEBHOOK, json={"action":"getMembers"}, timeout=10)
+        members = resp.json().get("members", [])
+        for m in members:
+            if str(m.get("userId","")) == str(user_id):
+                return m.get("status","") == "ACTIVE"
+    except:
+        pass
+    return False
+
 def generate_password() -> str:
     """Generate password like KMT-A4B9C2"""
     letters = random.choices(string.ascii_uppercase, k=3)
@@ -643,10 +658,16 @@ async def find_car(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_rate_limit(update.effective_user.id):
         await update.message.reply_text("⚠️ တစ်မိနစ်အတွင်း Request များသွားတယ် — ခဏစောင့်ပါ")
         return
+    user_id  = update.effective_user.id
+    if not await is_active_member(user_id):
+        await update.message.reply_text(
+            "🔒 *Member များသာ သုံးနိုင်ပါသည်*\n\n"
+            "Membership ရယူရန် /start နှိပ်ပါ",
+            parse_mode='Markdown')
+        return
     if not context.args:
         await update.message.reply_text("❌ Chassis ထည့်ပါ\nဥပမာ: `/find NT32-504837`", parse_mode='Markdown')
         return
-    user_id  = update.effective_user.id
     is_admin = user_id in ADMIN_IDS
     chassis  = ' '.join(context.args)
     car      = find_by_chassis(chassis)
@@ -678,10 +699,16 @@ async def find_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not check_rate_limit(update.effective_user.id):
         await update.message.reply_text("⚠️ တစ်မိနစ်အတွင်း Request များသွားတယ် — ခဏစောင့်ပါ")
         return
+    user_id  = update.effective_user.id
+    if not await is_active_member(user_id):
+        await update.message.reply_text(
+            "🔒 *Member များသာ သုံးနိုင်ပါသည်*\n\n"
+            "Membership ရယူရန် /start နှိပ်ပါ",
+            parse_mode='Markdown')
+        return
     if not context.args:
         await update.message.reply_text("❌ Model ထည့်ပါ\nဥပမာ: `/model xtrail`", parse_mode='Markdown')
         return
-    user_id  = update.effective_user.id
     is_admin = user_id in ADMIN_IDS
     query    = ' '.join(context.args)
     results  = find_by_model(query)
@@ -790,11 +817,14 @@ async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown')
 
 async def price_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id  = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("🔒 *Admin သာ သုံးနိုင်ပါသည်*", parse_mode='Markdown')
+        return
     if not context.args:
         await update.message.reply_text("❌ Chassis ထည့်ပါ\nဥပမာ: `/history NT32-504837`", parse_mode='Markdown')
         return
-    user_id  = update.effective_user.id
-    is_admin = user_id in ADMIN_IDS
+    is_admin = True
     chassis  = ' '.join(context.args).upper()
     history  = get_price_history(chassis)
     if not history:
@@ -824,6 +854,13 @@ async def price_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb) if kb else None)
 
 async def list_cars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await is_active_member(user_id):
+        await update.message.reply_text(
+            "🔒 *Member များသာ သုံးနိုင်ပါသည်*\n\n"
+            "Membership ရယူရန် /start နှိပ်ပါ",
+            parse_mode='Markdown')
+        return
     priced = {p['chassis'] for p in PRICE_HISTORY}
     txt    = f"🚗 *ကားစာရင်း ({len(CARS)} စီး)*\n\n"
     for car in CARS[:20]:
@@ -896,6 +933,12 @@ async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mypassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user    = update.effective_user
     user_id = user.id
+    if not await is_active_member(user_id):
+        await update.message.reply_text(
+            "🔒 *Member များသာ သုံးနိုင်ပါသည်*\n\n"
+            "Membership ရယူရန် /start နှိပ်ပါ",
+            parse_mode='Markdown')
+        return
     if not SHEET_WEBHOOK:
         await update.message.reply_text("❌ System error — Admin ကို ဆက်သွယ်ပါ")
         return
