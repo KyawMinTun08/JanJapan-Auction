@@ -947,12 +947,26 @@ async def renew_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mypassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user    = update.effective_user
     user_id = user.id
+
+    # Member check
     if not await is_active_member(user_id):
         await update.message.reply_text(
             "🔒 *Member များသာ သုံးနိုင်ပါသည်*\n\n"
             "Membership ရယူရန် /start နှိပ်ပါ",
             parse_mode='Markdown')
         return
+
+    # Package check — WEB only
+    pkg = await get_member_package(user_id)
+    if pkg != "WEB":
+        await update.message.reply_text(
+            "🚫 *Web Password မရှိပါ*\n\n"
+            "လက်ရှိ Package: 📱 Standard\n\n"
+            "🌐 Web App သုံးဖို့ 💎 *Web Premium* သို့ Upgrade လုပ်ပါ\n"
+            "👉 /renew နှိပ်ပြီး Web Premium ရွေးပါ",
+            parse_mode='Markdown')
+        return
+
     if not SHEET_WEBHOOK:
         await update.message.reply_text("❌ System error — Admin ကို ဆက်သွယ်ပါ")
         return
@@ -973,8 +987,7 @@ async def mypassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             admin_link = f"\n💬 [Admin ကို ဆက်သွယ်](https://t.me/{ADMIN_USERNAME})" if ADMIN_USERNAME else ""
             await update.message.reply_text(
-                f"❌ သင်၏ Member အချက်အလက် မတွေ့ပါ\n\n"
-                f"Member မဟုတ်သေးပါ — Membership ဝယ်ရန် /renew{admin_link}",
+                f"❌ Password မတွေ့ပါ\n\nAdmin ကို ဆက်သွယ်ပါ{admin_link}",
                 parse_mode='Markdown')
     except Exception as e:
         logger.error(f"mypassword: {e}")
