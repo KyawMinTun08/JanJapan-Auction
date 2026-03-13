@@ -1934,7 +1934,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         months   = pay_data.get("months", 1)
         name     = pay_data.get("name", "Unknown")
         username = pay_data.get("username", str(member_id))
-        password = generate_password()
+        password = generate_password() if package == "WEB" else ""
 
         # Save to Sheet
         await save_member_to_sheet(
