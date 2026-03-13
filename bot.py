@@ -303,11 +303,12 @@ async def is_active_member(user_id: int) -> bool:
     return False
 
 def generate_password() -> str:
-    """Generate password like KMT-A4B9C2"""
-    letters = random.choices(string.ascii_uppercase, k=3)
-    digits  = random.choices(string.digits, k=3)
-    mixed   = [letters[0], digits[0], letters[1], digits[1], letters[2], digits[2]]
-    return "KMT-" + "".join(mixed)
+    """Generate password like KMT-A4B9C2-X7M3 (10 chars, stronger)"""
+    letters = random.choices(string.ascii_uppercase, k=5)
+    digits  = random.choices(string.digits, k=5)
+    mixed   = [letters[0], digits[0], letters[1], digits[1], letters[2],
+               digits[2], letters[3], digits[3], letters[4], digits[4]]
+    return "KMT-" + "".join(mixed[:6]) + "-" + "".join(mixed[6:])
 
 # ── Helpers ───────────────────────────────────────────
 def loc_display(loc_key: str) -> str:
