@@ -114,6 +114,22 @@ CHASSIS_PREFIX_MAP = {
     "JNCMM60C6GU":"UD","JNCMM60G6GU":"UD","GK6XA":"QUON","JNCLSC":"CONDOR",
     "V98W":"PAJERO","V97W":"PAJERO","V93W":"PAJERO","V75W":"PAJERO","V78W":"PAJERO",
     "WVWZZZ":"NEW BEETLE",
+    # ── European VIN Prefixes ──────────────────────────
+    "WWWZZZ":"NEW BEETLE",    # VW Beetle alt
+    "WVW":"VW",               # Volkswagen
+    "WAU":"AUDI",             # Audi
+    "WBA":"BMW",              # BMW
+    "WBS":"BMW M",            # BMW M Series
+    "WDB":"MERCEDES-BENZ",    # Mercedes
+    "WDC":"MERCEDES-BENZ",    # Mercedes SUV
+    "WDD":"MERCEDES-BENZ",    # Mercedes
+    "SAJ":"JAGUAR",           # Jaguar
+    "SAL":"LAND ROVER",       # Land Rover
+    "SAR":"RANGE ROVER",      # Range Rover
+    "VF1":"RENAULT",          # Renault
+    "ZFA":"FIAT",             # Fiat
+    "ZFF":"FERRARI",          # Ferrari
+    "ZAR":"ALFA ROMEO",       # Alfa Romeo
 }
 
 CARS = [
@@ -343,6 +359,41 @@ async def get_member_package(user_id: int) -> str | None:
         logger.error(f"get_member_package: {e}")
         return None
 
+def decode_vin_year(vin: str) -> int:
+    """Decode year from VIN position 10 (index 9)"""
+    VIN_YEAR = {
+        'A':1980,'B':1981,'C':1982,'D':1983,'E':1984,'F':1985,'G':1986,'H':1987,
+        'J':1988,'K':1989,'L':1990,'M':1991,'N':1992,'P':1993,'R':1994,'S':1995,
+        'T':1996,'V':1997,'W':1998,'X':1999,'Y':2000,
+        '1':2001,'2':2002,'3':2003,'4':2004,'5':2005,'6':2006,'7':2007,'8':2008,
+        '9':2009,'A':2010,'B':2011,'C':2012,'D':2013,'E':2014,'F':2015,'G':2016,
+        'H':2017,'J':2018,'K':2019,'L':2020,'M':2021,'N':2022,'P':2023,'R':2024,
+        'S':2025,'T':2026,
+    }
+    # Position 10 = index 9
+    # Note: A,B,C... repeat after 2000 so check context
+    VIN_YEAR_MODERN = {
+        'A':2010,'B':2011,'C':2012,'D':2013,'E':2014,'F':2015,'G':2016,
+        'H':2017,'J':2018,'K':2019,'L':2020,'M':2021,'N':2022,'P':2023,
+        'R':2024,'S':2025,'T':2026,
+        '1':2001,'2':2002,'3':2003,'4':2004,'5':2005,'6':2006,'7':2007,
+        '8':2008,'9':2009,
+    }
+    try:
+        if len(vin) >= 10:
+            char = vin[9].upper()
+            return VIN_YEAR_MODERN.get(char, 0)
+    except:
+        pass
+    return 0
+
+def is_european_vin(chassis: str) -> bool:
+    """European VIN = 17 chars alphanumeric, starts with W/S/V/Z/X/T"""
+    c = chassis.upper().replace("-","").replace(" ","")
+    if len(c) == 17 and c[:1] in ("W","S","V","Z","X","T"):
+        return True
+    return False
+
 def guess_model_from_chassis(chassis_input: str) -> str:
     cu = chassis_input.upper().strip()
     for prefix in sorted(CHASSIS_PREFIX_MAP.keys(), key=len, reverse=True):
@@ -354,9 +405,15 @@ async def guess_model_gemini(chassis_input: str) -> str:
     if not GEMINI_API_KEY:
         return "UNKNOWN"
     try:
-        prefix  = chassis_input.split("-")[0] if "-" in chassis_input else chassis_input[:6]
+        if is_european_vin(chassis_input):
+            vin_yr = decode_vin_year(chassis_input)
+            yr_hint = f" Year hint from VIN: {vin_yr}." if vin_yr else ""
+            prompt = f"This is a European VIN: {chassis_input}.{yr_hint} What car brand and model is this? Reply ONLY the model name UPPERCASE (e.g. NEW BEETLE, AUDI A4, BMW 3 SERIES). If unknown reply UNKNOWN."
+        else:
+            prefix  = chassis_input.split("-")[0] if "-" in chassis_input else chassis_input[:6]
+            prompt  = f"What Japanese car model has chassis prefix '{prefix}'? Reply ONLY the model name UPPERCASE. If unknown reply UNKNOWN."
         url     = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-        payload = {"contents":[{"parts":[{"text":f"What Japanese car model has chassis prefix '{prefix}'? Reply ONLY the model name UPPERCASE. If unknown reply UNKNOWN."}]}]}
+        payload = {"contents":[{"parts":[{"text":prompt}]}]}
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, timeout=15)
         data = resp.json()
@@ -380,6 +437,12 @@ def find_by_model(model_input: str):
 
 def extract_chassis_from_text(text: str):
     text = text.upper().strip()
+    # European VIN (17 chars) — check first
+    vin_matches = re.findall(r'[A-HJ-NPR-Z0-9]{17}', text)
+    for v in vin_matches:
+        if v[0] in ("W","S","V","Z","X","T"):
+            return v
+    # Japanese chassis patterns
     for pattern in [
         r'[A-Z]{1,5}\d{1,4}[A-Z]{0,2}\d{0,2}-\d{4,7}',
         r'[A-Z]{2,6}\d{2,4}-\d{4,7}',
@@ -982,7 +1045,8 @@ async def mypassword_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔑 *သင်၏ Web Password*\n\n"
                 f"`{data['password']}`\n\n"
                 f"🌐 https://kyawmintun08.github.io/Japan-Auction-Car-Checker-/\n\n"
-                f"⚠️ Password ကို မည်သူ့ကိုမျှ မပေးပါနဲ့",
+                f"⚠️ Password ကို မည်သူ့ကိုမျှ မပေးပါနဲ့\n"
+                f"   မျှဝေပါက Membership ပိတ်သိမ်းခံရမည်",
                 parse_mode='Markdown')
         else:
             admin_link = f"\n💬 [Admin ကို ဆက်သွယ်](https://t.me/{ADMIN_USERNAME})" if ADMIN_USERNAME else ""
